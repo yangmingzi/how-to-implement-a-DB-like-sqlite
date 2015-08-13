@@ -57,4 +57,43 @@ Trunk page的结构如下: (1)4-bytes的空间存储下一个trunk page的编号
 <br>
 
 ###3.3 Journal File 结构
-SQLite使用
+SQLite使用三种journal file, 分别是rollback journal, statement journal, master journal. (它们被称为legacy journals. 在SQLite 3.7.0版本后, SQLite团队引入了WAL journaling模式. Database file能够处于这两种模式之一.) 我将在接下来的三章介绍legacy journals, 而关于WAL的内容, 将会被放到10.17节.
+<br>
+
+####3.3.1 Rollback journal
+SQLite会对每个数据库维护一个rollback journal file. (In-memory database不需要). Rollback journal file总是和其database file在同一个文件夹下. 其名字为database file名字加上"-journal". journal文件在默认模式下只是临时文件, SQLite会在每次write-transaction的时候创建它们, 并在事务完成时删除. 
+
+SQLite会将rollback journal file分成多个变长度的log segment, 如图3.6. 每段log segment开始于segment header, 接着是一个或多个log records.
+![Pic3.6](/home/qw4990/桌面/SQLITE_BOOK/Pic3.6.png)
+
+####3.3.1.1 Segment header结构
+Segment header结构如图3.7. Segment header开始与8个特殊的bytes: 0xD9, 0xD5, 0x05, 0xF9, 0x20, 0xA1, 0x63, 0xD7. 我们将这个序列称为magic number. 这个序列是被随机选取的, 只是被用来做一点常规检查, 并没有什么卵用. Number of records (简称为nRec) 记录有多少个log segment, nRec在异步事务处理时会被初始化为-1, 在普通事务处理时被初始化为0. Random number被用来计算checksum. Initial database page count记录原database中一共有多少pages. Sector size表示database file所在磁盘扇区大小. Page size表示page大小. 剩下的空间留作备用. 
+
+![Pic3.7](/home/qw4990/桌面/SQLITE_BOOK/Pic3.7.png)
+
+<b>Sector size检测:</b> 其检测需要操作系统支持, 如果不能, 则默认为512bytes. SQLite认为操作系统只能以Sector为最小单位进行读写操作.
+
+Rollback journal file通常只含有一个log segment. 但是某些情况下, 会存在多segment的文件, 此时SQLite会多次对segment header进行读写(我将在5.4.1.3讨论这情况). 每次进行segment header读写时, 都会以sector为单位. 
+
+<b>Journal file保留: </b>默认的模式下, SQLite会在事务完成后删除journal files. 但是你能通过prama journal_mode指令来保留它们. journal_mode有DELETE, PERSIST, TRUNCATE三种, 默认是DELETE. 还有几种其他的journal_mode我会在之后进行介绍. 如果应用使用了exclusive locking 模式 (pragma locking_mode = exclusive), SQLite会创建并保留Journal file直到应用取消这个锁. 
+
+<b>Journal的维护: </b>rollback journal只有当其含有合法的segment header时才有效. 无效的journal将不会被用于事务保护. 
+
+<b>异步事务: </b>SQLite支持比普通事务更快的异步事务. 异步事务处理期间, SQLite不会刷新journal和database file, 并且journal file只会有一个log segment. 此时nRec会为-1. SQLite不建议使用异步事务, 但是你能够执行pragma指令来开启. 
+
+####3.3.1.2 Log record结构
+非SELECT语句都会产生log records. 在修改任何page之前, 原page的内容都会被写入journal的新log record中. 图3.8展示了一个log record的结构. 它包含了一个4-bytes的checksum. 这个checksum涵盖了page number到page content的内容. segment header中的random number被作为计算checksum的键值. 这个Random number非常重要, 如果某条log recorder的垃圾数据刚好来自同页的另外一份journal file, 那么其checksum就刚好是正确的. 而对不同的journal file使用不同的rondom number作为键值, 则能将这个风险最小化. 
+![Pic3.8](/home/qw4990/桌面/SQLITE_BOOK/Pic3.8.png)
+
+####3.3.2 Statement journal
+
+####3.3.3 Multi-database transaction journal 和 master journal
+
+####总结
+SQLite把所有的数据信息存储到一个大文件内 (database file). 但同时也支持临时和in-memory数据库, 它们将会在应用打开时被建立, 并在应用关闭时被删除. 
+
+每个database file都是一个固定页大小组织的文件. 逻辑上, database file就是一连串的pages. 默认的page大小是1024, 但是能被设置在512到65536之间, 同时其大小必须为2的次方. database file最多能包含2^31 - 2页. Pages被分为4种: free, tree, lock-byte, pointer-map. Tree page能被细分为internal, leaf, overflow. 
+
+第一个page被成为anchor page. database file的前100bytes包含了整个数据库的一些基本信息, 比如page size等. 所有的free pages都被以rooted trunked tree结构组织. 
+
+SQLite使用三种journal files: rollback, statement, master. rollback和master journal和database file在同个文件夹下, 而statement通常在一个临时目录, 比如/tmp. rollback journal存储变长的log records. 而master journal存储多数据库事务下所有rollback journal的名称. statement journal则为每条单独的insert/update/delete语句提供记录. 
