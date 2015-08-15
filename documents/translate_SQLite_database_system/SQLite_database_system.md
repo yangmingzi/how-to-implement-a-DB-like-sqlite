@@ -97,3 +97,37 @@ SQLite把所有的数据信息存储到一个大文件内 (database file). 但�
 第一个page被成为anchor page. database file的前100bytes包含了整个数据库的一些基本信息, 比如page size等. 所有的free pages都被以rooted trunked tree结构组织. 
 
 SQLite使用三种journal files: rollback, statement, master. rollback和master journal和database file在同个文件夹下, 而statement通常在一个临时目录, 比如/tmp. rollback journal存储变长的log records. 而master journal存储多数据库事务下所有rollback journal的名称. statement journal则为每条单独的insert/update/delete语句提供记录. 
+
+<br><br><br><br><br><br><br><br><br><br><br><br>
+
+<h1>第4章.事务管理</h1>
+###学习目的:
+读完本章内容后, 你会知道:
+
++   SQLite怎么实现ACID
++  SQLite管理lock的方式
++  SQLite怎么避免deadlocks
++  SQLite怎么实现journaling protocols
++ SQLite怎么记录savepoint
+
+###本章大纲
+DBMS的主要职责之一就是帮助用户维护database. DBMS能够在多用户同时操作的情况下对database进行保护, 以及在事务失败时进行回滚和恢复. 为了实现这些功能, SQLite以事务为单位执行操作. SQLite在实现ACID时会依赖操作系统和journals. 你可以认为SQLite只支持 flat transaction, 不支持nesting transaction. 本章我会介绍SQLite怎么实现ACID, 下一章我会介绍SQLite中进行事务管理的pager层.
+
+###4.1 事务类型
+几乎所有的DBMS都使用locking mechanisms进行并发控制, 使用journals来保存恢复信息. 在database被修改之前, DBMS将一些日志信息写入journals. DBMS会保证这些日志信息被完整的存储了之后, 才进行database修改. 当transaction失败后, DBMS能从日志文件中读取足够的信息来恢复. 在SQLite中, lock方式和log方式都取决于transaction的类型. 我将会在本章对这些类型进行介绍.
+
+###4.1.1 System transaction
+SQLite将每条语句放在transaction内执行, 支持读和写 transaction. 上层应用只能通过读写transaction读取数据, 只能通过写transaction写入数据到database. 在执行SQL语句时, 不必显式的让SQLite为其包裹transaction, SQLite会自动进行. 这就是autocommit模式. 这样形成的transaction称之为system or auto or implicit transactions. 对于SELECT语句,  SQLite自动将其置入一个read transaction内执行. 对于non-SELECT语句, SQLite先创建一个read transaction, 然后将其转换为一个write transaction. 每个transaction将会在执行后被自动提交. 对于上层应用而言, 它并不知道transaction的存在. 
+
+应用能并发的执行SELECT语句, 但是不能并发执行non-SELECT语句. non-SELECT会被原子性的执行, SQLite会为多个non-SELECT维护mutex. 而SELECT语句则不会被原子性执行. 
+
+###4.1.2 User transaction
+默认的autocommit模式对某些应用来说可能会有很昂贵的代价, 特别是对那些写敏感的操作. 因为SQLite对每条non-SELECT语句都会要求重打开, 写入, 关闭journal files. 除此之外, 还会有并发控制带来的额外负担, 比如需要对database file申请和释放lock. 为了避免上述开销被重复, 用户可以开启一个user transactiong. 可以把多条SQL语句写在"BEGIN TRANSACTION"和"COMMIT [or ROLLBACK] TRANSACTION"之间. 
+
+###4.1.3 Savepoint
+SQLite为user transaction提供了savepoint. 应用能在user transaction内或外执行savepoint指令. Savepoint是transaction内的点, 它表示当前transaction的一种状态. 一个transaction能包含多个savepoint. 当transaction失败时, 我们能回滚到某个savepoint.
+
+###4.1.4 Statement subtransaction
+
+
+###4.2 Lock management
