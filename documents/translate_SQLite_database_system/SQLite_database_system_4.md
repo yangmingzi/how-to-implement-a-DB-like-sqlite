@@ -114,16 +114,27 @@ SQLite通过操作系统提供的函数实现其自己的locking结构. 由于li
 ![Pic4.5](/home/qw4990/桌面/SQLITE_BOOK/Pic4.5.png)
 
 ####4.2.6.3 Linux系统问题
-SQLite使用了POSIX协议的locking结构, 并且使用fcntl来申请和释放lock. 正如之前所说, locks只是操作系统维护在内存中的一种数据结构. 值得一提的是linux的lock是针对inode进行维护的, 而不是文件名. 在Linux中,  使用软或硬连接能将不同的文件名指向相同的inode, 这会对native lock造成某些奇怪的影响. 第二点需要注意的是虽然locks是通过fcntl和file descriptor进行上锁, 但是它们两者之间没有什么联系, 只和inode有关系. 如果一个进程对某个文件在相同的区域用两个不同的file descriptor进行上锁, 那么第二个lock将会覆盖掉第一个 (这两次操作来自同一个进程不同的线程).
-
-下面通过几个例子来演示一下上述问题. 假设file1和file2是两个有不同文件名的相同文件(指向不同的inode). 假设某进程打开了它们:
+SQLite使用了POSIX协议的locking结构, 并且使用fcntl来申请和释放lock. 正如之前所说, locks只是操作系统维护在内存中的一种数据结构. 值得一提的是linux的lock是针对inode进行维护的, 而不是文件名. 在Linux中,  使用软或硬连接能将不同的文件名指向相同的inode, 这会对native lock造成某些奇怪的影响. 第二点需要注意的是虽然locks是通过fcntl和file descriptor进行上锁, 但是它们两者之间没有什么联系, 只和inode有关系. 如果一个进程对某个文件在相同的区域用两个不同的file descriptor进行上锁, 那么第二个lock将会覆盖掉第一个 (这两次操作来自同一个进程不同的线程).通过几个例子来演示一下上述问题. 假设file1和file2是两个有不同文件名的相同文件(指向不同的inode). 假设某进程打开了它们:
 int fd1 = open("file1", ...);
 int fd2 = open("file2", ...);
 假设线程1通过fd1取得了一个read lock; 线程2通过fd2在相同位置取得了一个write lock, 此时之前的read lock就被覆盖了, 因为两个lock都来自同一个进程, 且在相同位置. 
 
 这意味着如一个进程多线程的打开了database file, 并执行不同的操作, 那么它们之间会相互的影响. 于是我们不能简单的使用native lock来进行并发控制. 
 
-<b>线程控制内容暂时省略...</b>
+为了解决这个问题, SQLite需要自己跟踪所有打开的file descriptor. 这需要增加一层抽象. 当SQLite为线程打开database file时, 他能追踪到其inode(通过fstat), 然后查看是否已经有锁被加在其之上了. 
+
+当需要对某个inode申请一把lock时, SQLite先会查看程序是否已经对这个inode申请过一把锁了. 对于每个打开的inode, SQLite维护一个结构(unixInodeInfo)来跟踪其lock信息(如下图). unixInodInfo封装了文件现在的lock状态. 在图中, 某个database file被在三个地方打开了. 一个unixInodeInfo对象就表示一个SQLite lock. 一个进程不能对同一个inode有多个unixInodeInfo对象. 
+![Pic4.6](/home/qw4990/桌面/SQLITE_BOOK/Pic4.6.png)
+
+所有的unixInodeInfo对象被存于双向链表(inodeList). device number 和 inode number被用于在表中查找. 开始时, inodeList为空. inodeList被一个globle thread mutex保护. 
+
+unixInodeInfo保留了一个nRef字段, 表示进程打开了几次这个文件. eFileLock表示现在进程现在取得的最高级lock. lock的等级如下升高: NOLOCK, SHARED, RESERVED, PENDING, EXCLUSIVE. nShared字段指示该文件上有几把SHARED lock. 当某个线程准备申请或者释放lock时, SQLite会先检查unixInodeInfo, 只有当真正有需求时, 才会调用fcntl执行lock操作. 比如进程拿到了RESERVED lock, 线程申请SHARED lock, 于是SQLite将nShared值加一, 即完成申请lock的操作. 但是如果线程想要申请EXCLUSIVE lock, 那此时才会调用fcntl为进程申请一把write lock. 
+
+SQLite维护unixFile结构来追踪文件的状态. 如上图, 每个database connection都有一个unixFile. unixFile结构能够使得对文件的操作与操作系统无关. 所有对文件的操作都使用这个结构作为handle. unixFile中存着真实操作系统中打开文件的file descriptor. unixFile作为一个handle主要被用来打开, 关闭, 执行lock操作. unixFile有一个执行unixInodeInfo的指针. unixFile的eFileLock字段表示该database connection对打开文件的lock等级. 
+
+如果相同的inode被同个进程的多个线程打开, 将会有多个unixFile, 但是它们都共享一个unixInodeInfo. 正如上图所示. 
+
+
 
 ####4.6.2.4 多线程应用
 
@@ -136,5 +147,40 @@ sqlite3OsLock的完整定义为int sqlite3OsLock(unixFile *id, int locktype). �
 Sqlite3OsLock的步骤如下:
 
 1. int idLocktype = id->eFileLock;  //得到当前的SQLite lock
+
 2. int pLock = id->inodeInfo->eFileLock; // 得到进程的SQLite lock
-3. 
+
+3. Assertion 1: idLocktype <= pLocktype
+
+4. 如果现在的lock等级已经高于申请lock的等级, 不做任何操作.
+if (idLocktype >= locktype) return SQLITE_OK;
+
+5. Assertion 2: locktype > idLocktype
+
+6. Assertion 3: (locktype == SHARED) || (idLocktype != NOLOCK)
+如果要取得大于SHARED等级的lock, 那么现在的lock等级起码要大于等于SHARED, 也就是不等于NOLOCK
+
+7. Assertion 4: locktype != PENDING
+用户端不能直接申请PENDING lock
+
+8. Assertion 5: (locktype != RESERVED) || (idLocktype == SHARED)
+只有当前lock为SHARED时, 才能申请RESERVED
+
+9. if (idLocktype != pLock) { // 该进程内有其他transaction申请了更高等级的lock
+<ul>
+ <li>Assertion 6: idLocktype < pLock</li>
+ <li>Assertion 7: pLock >= SHARED</li>
+ <li>if (pLock >= PENDING) return SQLITE_BUSY;</li>
+ <li>Assertion 8: (pLock = = SHARED) || (pLock = = RESERVED) </li>
+ <li>if (locktype > SHARED) {
+&nbsp;&nbsp;Assertion 9: pLock > SHARED;
+&nbsp;&nbsp;从Assertion 8和9我们有pLock == PENDING
+&nbsp;&nbsp;return SQLITE_BUST;
+}</li>
+</ul>
+
+####4.2.7.2 sqlite3OsUnlock
+
+####4.3 Journal管理
+
+####4.4 Subtransaction管理
