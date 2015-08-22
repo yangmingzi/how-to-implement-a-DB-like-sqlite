@@ -74,7 +74,9 @@ rollback journal文件包含了一个文件头(下图绿色部分), 其中记录
 ###3.7 刷新rollback journal到硬盘
 下一步是将rollback journal的内容写入到硬盘中. 这是关键的一步, 这一步保证数据库能处理一些极端情况, 比如断电. 这一步会花费不少时间, 因为硬盘IO向来是比较慢的.
 
-这一步通常比你想的"简单的刷新rollback journal文件到硬盘"要复杂. 主流的操作系统中, 需要分两步进行"刷新"(或者说"同步"). 第一步是刷新rollback journal的主要内容(蓝色部分), 接下来修改rollback journal的文件头部分, 然后刷新文件头到硬盘. 这样做的原因及一些细节将会在之后的几节解释.
+这一步通常比你想的"简单的刷新rollback journal文件到硬盘"要复杂. 主流的操作系统中, 需要分两步进行"刷新"(或者说"同步"). 第一步是刷新rollback journal的主要内容(蓝色部分), 接下来修改rollback journal的文件头部分, 然后刷新文件头到硬盘. 
+
+先刷新主要内容, 再刷新文件头部分的原因是为了防止这种情况: 如果现在已经刷入了文件头, 在刷入文件主要内容时, 断电了, 那么由于SQLite对journal文件只检查其文件头是否合法, 那么这份错误的journal就可能被当作有效数据被用于回滚.
 ![](http://www.sqlite.org/images/ac/commit-6.gif)
 
 ###3.8 取得exclusive锁
@@ -106,3 +108,47 @@ pending锁运行之前已经申请shared锁的进程继续读取内容. 但是�
 
 如下图, 可以发现释放锁后, 用户空间的内容已经被情况, 但是在比较新版本的SQLite中, 用户空间中的内容能够被再保存一段时间, 以应付下一次事务操作, 这比再重新从硬盘中读出数据, 显然快的多. 但是在使用上次事务遗留数据时, 我们第一步操作依然是要取得一个shared锁, 因为此时可能有其他进程正在修改数据库文件. 同时每个数据库文件的文件头中, 都有一个计数器, 表示当前数据库文件被修改过的次数. 如果我们发现此时这个计数器和我们之前存的不一样, 那么说明已经有进程修改过数据库了. 那么这是我们将情况用户空间, 重读入数据.
 ![](http://www.sqlite.org/images/ac/commit-B.gif)
+
+###4.0 回滚
+原子操作会被当作"立即发生". 但是单独考察上面描述的各个过程, 明细不是原子性的, 比如在某次写入期间, 断电了, 那么写入操作就只有部分被完成. 为了维护操作的原子性, 我们增加了"回滚"机制, 如果出现了为完全完成的事务, 回滚机制能将数据库文件还原到事务进行前的状态. 
+
+### 4.1 事务出错后...
+假设我们在3.10步, 正在向硬盘写回内容的时候, 断电了. 当电力恢复后, 此时的数据情况如下图表示, 我们修改的3页中, 只有1页被修改成功了, 有1页只修改了部分, 有1页还完全为被修改. 
+
+但是此时rollback journal文件是完整的存在硬盘上的, 这点很关键. 我们在3.7中分两步刷新rollback journal文件的原因就是要保证它确确实实毫无差错的被保存在了硬盘上. 
+![](http://www.sqlite.org/images/ac/rollback-0.gif)
+
+###4.2 Hot Rollback Journal
+当SQLite第一次准备读取数据库文件时, 它会发现存在一个rollback journal文件. 接下来SQLite检查这个文件是否是一个"hot rollback journal". "hot rollback journal"指的是需要被立马使用, 用于回滚数据库文件的journal文件. "hot rollback journal"只会在某个事务出现错误后, 才会出现. 
+
+一个rollback journal是"hot", 它必须满足下面全部条件:
+
+1. 这份文件存在.
+
+2. 这份文件不为空.
+
+3. 此时数据库文件上没有reserved锁.
+
+4. 这份文件的文件头合法.
+
+5. 这份文件中不包含某个"master journal"文件名(5.5节中介绍), 如果包含, 那这个"master journal"文件一定存在.
+
+Hot rollback journal的出现, 意味着数据库之前出现了某些错误, 现在亟需被修复.
+![](http://www.sqlite.org/images/ac/rollback-1.gif)
+
+###4.3 取得exclusive锁
+回滚的第一步就是立马取得一把exclusive锁, 防止其他进行对数据库文件进行读写.
+![](http://www.sqlite.org/images/ac/rollback-2.gif)
+
+###4.4 回滚所有未完成修改
+取得exclusive锁后, 就得到了写数据库文件的权利. 接下来的操作是从硬盘上的rollback journal文件中读取之前页的内容, 然后将其写回到数据库文件. 写回到数据库文件中后, 数据库文件中的内容就被修复了.
+![](http://www.sqlite.org/images/ac/rollback-3.gif)
+
+###4.5 删除Hot journal
+Journal文件中的数据被写回到数据库后, 就可以将其删除了. 在3.11中已经说过, 你可以直接删除journal文件, 也可以truncate它为0, 也可以修改它的文件头. 总之不管用哪种方法, 这份hot journal文件都会被删除或者变成非法, 对SQLite来说它已经不会存在了.
+![](http://www.sqlite.org/images/ac/rollback-4.gif)
+
+###4.6 继续你之前的操作
+当最后一步修复工作完成后, 你就能继续你之前的操作了, 就好像出错的事务并没有发生一样. 
+![](http://www.sqlite.org/images/ac/rollback-5.gif)
+
