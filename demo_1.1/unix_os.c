@@ -1,11 +1,10 @@
-#include "base.h"
-#include "os.h"
+#include "sqlite.h"
 
 typedef struct UnixFile UnixFile;
 
 // this object represent an open file on unix system
 struct UnixFile {
-  SqlFile base;  //base data, must be first
+  struct SqlFile base;  //base data, must be first
 
   int fd;  // file descriptor
   char *filename;  // filename

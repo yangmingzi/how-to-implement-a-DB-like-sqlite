@@ -1,5 +1,5 @@
 #include "os.h"
-#include "base.h"
+#include "sqlite.h"
 
 // a simple test for OS layer
 void osTest() {

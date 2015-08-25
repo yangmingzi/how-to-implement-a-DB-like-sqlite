@@ -9,7 +9,18 @@
 ###本章大纲
 本章讨论Pager层. Pager在数据库和操作系统间实现了一层"page"的抽象. 它帮助上层模块能够快速访问"需要的page", 通过page cache技术. 这一层也实现了ACID性质, 能够处理并发和回滚. 同时它也管理日志和lock操作. 
 
-###5.1 Pager
+###5.1 Pager模块
+数据库本身通常作为普通文件存放在硬盘上, 而通常硬盘I/O的速度是不能说快的. 同时数据库文件一般都非常大, 你也不可能将其全部读入内存进行管理. 由于这两个原因, 我们需要一个有效, 快速的模块来对内存进行管理, 对数据库内容进行缓存. 在SQLite中, 这个模块被成为Page cache. 这些缓存被保留在用户空间中, 而不是在系统空间(当然系统空间也有其自己的缓存区). 
+
+而管理page cache的模块, 称为Pager. 它能将上层对数据的访问转化为page的形式(分页管理). 在Pager之上的模块, Tree, 将只通过Pager对操作系统进行访问. Tree将数据库文件和journal文件视为一连串pages. 
+
+SQLite为每个打开的database connection维护其自己的cache. In-memory数据库虽然不需要缓存, 但是它还是表现得像普通数据库一样, 需要使用Pager来读取数据. 所以, 不管在哪种模式的数据库, Tree都有一套相同的接口. 
+
+Pager是SQLite中的最底层, 只有它才能直接和操作系统打交道. 但是它只负责读取数据, 而并不关心这些数据具体内容, 它只需要保证这些数据是"可靠"的即可. 
+
+对pager来说, 在内存和数据库文件之间交换page内容是再普通不过了. 但是这些page的具体交换方式, 以及交换过程的细节, 对上层模块, 如Tree是完全透明的. Pager是上层模块和操作系统间的中间层, 它主要的职责是对数据库文件的page进行缓存, 使得上层模块能直接使用内存中的数据, 而不必要和操作系统打交道.
+
+除了缓冲工作, Pager也有很多其他的作用. 它的主要职责还有这些: transaction管理, 数据管理, log管理, lock管理. 对于transaction管理, 它需要实现ACID性质. 对于数据管理, 它需要负责从数据库文件中读取或者写入数据. 对于log管理, 它需要管理log文件. 对于lock管理, 它需要保证进程在对数据库文件进行操作前, 以及申请了合适的锁. 总而言之, Pager的主要工作如下图.
 
 ###5.2 Pager接口
 本章我介绍几个Pager提供的接口, Tree层使用这些接口来访问数据库. 在此之前, 我先讨论下Pager和Tree之间的交互协议. 
@@ -18,7 +29,7 @@
 Pager之上的模块都对log管理和low-level lock一无所知. Tree把所有操作都当作transaction, 它不关心Pager层怎么实现ACID. 而Pager把transaction拆分为locking, logging, reading, writing等操作. Tree通过page number(页号)向Pager请求某页内容. Pager则返回一个指针, 这个指针就指向该page所在位置. 在修改page之前, Tree先通知Pager, 使之能够能够存储一些信息, 以备回滚和修复数据. 当Tree修改完page后, Pager才会将page从内存写回到disk.
 
 ###5.2.2 Pager接口结构
-Pager被一个结构体Pager表示. 每个被打开的database file都被一个Pager管理, 每个Pager也只对应一个database file. 当Tree准备打开某个database file使用时, 必须先建立一个新Pager, 然后在Pager上对database file进行操作. 一个进程能有多个transaction, 这些transaction有自己的Pager, 这些Pager打开同一个database file.
+Pager被一个结构体Pager表示. 每个被打开的database file都被一个Pager管理, 每个Pager也只对应一个database file. 当Tree准备打开某个database file使用时, 必须先建立一个新Pager, 然后在Pager上对database file进行操作. 而Page自己这一层的其他模块, 也使用Pager作为handle, 来完成一些诸如对journal文件状态追踪的工作. 一个进程能有多个transaction, 这些transaction有自己的Pager, 这些Pager打开同一个database file.
 
 一些Pager维护的变量被在下图中. 
 
@@ -142,4 +153,4 @@ Cache置换指的是当cache满时, 需要将一些旧的pages移除, 留出空�
 ### 5.3.6.2 LRU置换算法
 
 ### 5.3.6.3 SQLite cache置换架构
-SQLite将未被激活的pages逻辑上组织成一个队列, 让某个page不再被使用时, 它将被附加到队列的尾部. Victim slot从队列的头选出. 
+SQLite将未被激活的pages逻辑上组织成一个队列, 让某个page不再被使用时, 它将被附加到队列的尾部(因此队列尾部的page总是最近被放入的, 而队首的则是被闲置很久的page). Victim slot从队列的头选出. 但是其实也不是每次都从头选出. SQLite会从队列首开始, 选出一个slot, 同时这个slot被再利用的同时, 不必要去刷新journal文件. (假如这个page是脏的, 那么在利用它之前, SQLite必须先刷新journal文件, 而刷新文件是一个很耗时的过程). 

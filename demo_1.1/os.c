@@ -1,5 +1,6 @@
 #include "os.h"
-#include "base.h"
+#include "sqlite.h"
+
 
 /////////////////////////////////////////////////////////////////
 //  functions for accessing files
@@ -53,7 +54,7 @@ int osCurrentTime(SqlVFS *vfs, int *ret) {
 }
 
 SqlFile *osGetFileHandle(SqlVFS *vfs) {
-  SqlFile *p = (SqlFile *)malloc(vfs->file_size);
+  SqlFile *p = (SqlFile *)malloc(vfs->sz_file);
   return p;
 }
 
