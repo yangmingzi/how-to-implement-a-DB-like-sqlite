@@ -30,10 +30,26 @@ int pcacheSetPageSize(PCache *pcache, int sz_page) {
   assert(pcache->nref == 0 && pcache->pdirty == 0);
   if (pcache->sz_page) {
     SqlPCache *pnew = 0;
-    global_config.sql_pcache_methods.xCreate(1, 2);
+    pnew = global_config.sql_pcache_methods.xCreate(sz_page, sizeof(PgHdr));
     if (pnew == 0) return SQL_ERROR;
 
     pcache->pcache = pnew;
     pcache->sz_page = sz_page;
   }
+}
+
+PgHdr *pcacheFetch(PCache *pcache, Pgno pgno) {
+  SqlPCachePage *ppage 
+    = global_config.sql_pcache_methods.xFetch(pcache->pcache, pgno);
+
+  assert(ppage && ppage->extra);
+  return ppage->extra;
+}
+
+PgHdr *pcacheGet(PCache *pcache, Pgno pgno) {
+  SqlPCachePage *ppage 
+    = global_config.sql_pcache_methods.xGet(pcache->pcache, pgno);
+
+  if (!ppage) return 0;
+  return ppage->extra;
 }

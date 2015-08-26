@@ -49,7 +49,6 @@ int pagerOpen(
   memcpy(ppager->filename, filename, sz_filename);
   ppager->filename[sz_filename] = 0;
 
-
   // open database file
   if (osOpen(pvfs, ppager->filename, ppager->fd, flags) == SQL_ERROR) {
     // do nothing now.
@@ -64,3 +63,25 @@ int pagerOpen(
   *pppager = ppager;
   return SQL_OK;
 };
+
+
+// Functions used to obtain and release page references.
+int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
+  DbPage *pdb = pcacheGet(pager->pcache, pgno);
+  if (pdb) {
+    *pppage = pdb;
+    return SQL_OK;
+  }
+
+  printf("%p\n", pdb);
+  pdb = pcacheFetch(pager->pcache, pgno);
+  printf("%p\n", pdb);
+
+  DbPage *ppp = pcacheGet(pager->pcache, pgno);
+  printf("--> %p\n", ppp);
+  /*
+    do read-op
+  */
+
+  return SQL_ERROR;
+}

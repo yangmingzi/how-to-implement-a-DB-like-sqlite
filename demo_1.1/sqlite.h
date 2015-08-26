@@ -106,15 +106,27 @@ struct SqlVFS
 /*
 This type is opaque. It is implemented by the
 pluggable module. The SQLite core has no knowledge of 
-its size or internal structure.
+its size or internal structure. It used to pass the 
+pluggable cache module to SQLite core.
 */
 typedef struct SqlPCache SqlPCache;
+
+/*
+
+*/
+typedef struct SqlPCachePage SqlPCachePage;
+struct SqlPCachePage {
+  void *content;
+  void *extra;
+};
 
 /*
 */
 typedef struct SqlPCacheMethods SqlPCacheMethods;
 struct SqlPCacheMethods {
   SqlPCache *(*xCreate)(int sz_page, int sz_extra);
+  SqlPCachePage *(*xGet)(SqlPCache *, unsigned int key);
+  SqlPCachePage *(*xFetch)(SqlPCache *, unsigned int key);
 };
 
 #endif

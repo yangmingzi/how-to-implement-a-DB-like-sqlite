@@ -28,5 +28,7 @@ int pcacheOpen(
   PCache *pcache          // Preallocated space for the PCache
   );
 
+PgHdr *pcacheGet(PCache *pcache, Pgno pgno);
+PgHdr *pcacheFetch(PCache *pcache, Pgno pgno);
 
 #endif
