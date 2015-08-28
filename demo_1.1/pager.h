@@ -12,6 +12,9 @@ page cache for upper layer.
 // default page size, 1024 bytes
 #define SQL_DEFAULT_PAGE_SIZE 1024
 
+// size of database header
+#define SQL_DATABASE_HEADER_SIZE 100
+
 // The type used to represent a page number. The first page in 
 // a file is called page 1. And 0 is used to represent "not a page".
 typedef unsigned int Pgno;
@@ -41,7 +44,10 @@ int pagerOpen(
 // Functions used to obtain and release page references.
 int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage);
 
-// // Operations on page references.
-// int pagerWrite(DbPage *);
+// Operations on page references.
+int pagerWrite(DbPage *);
+
+// Sync database file for pager.
+int pagerCommit(Pager *);
 
 #endif

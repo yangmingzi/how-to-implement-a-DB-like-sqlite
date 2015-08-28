@@ -3,17 +3,21 @@
 */
 #include "pager.h"
 #include "pcache.h"
+#include "os.h"
 
+/*
+Each open database file is controlled by an instance of Pager structure.
+*/
 struct Pager {
-  SqlVFS *pvfs;          // VFS used to open database file
-  char *filename;
-  SqlFile *fd;           // file descriptor of database file
-
-  PCache* pcache;        // pointor to cache module
+  SqlVFS *pvfs;          // VFS used to open database file.
+  char *filename;        // Database file name.
+  SqlFile *fd;           // File descriptor of database file.
+ 
+  PCache* pcache;        // Pointor to cache module.
 };
 
 
-// Open and close a Pager connection. 
+// Open a Pager connection. 
 int pagerOpen(
   SqlVFS *pvfs,                    // The VFS to use to open the file
   Pager **pppager,                 // OUT: return the Pager structure here
@@ -34,7 +38,7 @@ int pagerOpen(
 
   ptr = malloc(
     sizeof(Pager) +
-    sz_filename + 1 +
+    sz_filename + 1 +    // append a '\0' to filename
     pvfs->sz_file +
     sz_pcache
     );
@@ -69,19 +73,61 @@ int pagerOpen(
 int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
   DbPage *pdb = pcacheGet(pager->pcache, pgno);
   if (pdb) {
+    ++pdb->nref;
     *pppage = pdb;
     return SQL_OK;
   }
 
-  printf("%p\n", pdb);
   pdb = pcacheFetch(pager->pcache, pgno);
-  printf("%p\n", pdb);
+  pdb->pgno = pgno;
+  pdb->pager = pager;
+  pdb->nref = 1;
+  pdb->flags = PGHDR_CLEAN;
+  pdb->pdirty_next = 0;
+  pdb->pdirty_prev = 0;
 
-  DbPage *ppp = pcacheGet(pager->pcache, pgno);
-  printf("--> %p\n", ppp);
-  /*
-    do read-op
-  */
+  osRead(pager->fd, pdb->pdata, SQL_DEFAULT_PAGE_SIZE, 
+          SQL_DATABASE_HEADER_SIZE + (pgno - 1) * SQL_DEFAULT_PAGE_SIZE);
+
+  *pppage = pdb;
 
   return SQL_ERROR;
+}
+
+// Make a page writable.
+int pagerWrite(DbPage* page) {
+  pcacheMakeDirty(page->pager->pcache, page);
+
+  return SQL_OK;
+}
+
+// Write the dirty page to database file.
+static void _pagerWritePage(PgHdr *pdirty) {
+  void *pdata = pdirty->pdata;
+  int offset = SQL_DATABASE_HEADER_SIZE + 
+                (pdirty->pgno - 1) * SQL_DEFAULT_PAGE_SIZE;
+  int sz = SQL_DEFAULT_PAGE_SIZE;
+
+  int ret = osWrite(pdirty->pager->fd, pdata, sz, offset);
+  printf("%d %d\n", SQL_OK, ret);
+  if (SQL_OK != ret) {
+    // do nothing now
+  }
+}
+
+// Sync database file for pager.
+int pagerCommit(Pager *pager) {
+  PCache *pcache = pager->pcache;
+  PgHdr *pdirty = pcacheGetDirty(pcache);
+
+  while (pdirty) {
+    PgHdr *next = pdirty->pdirty_next;
+
+    _pagerWritePage(pdirty);
+    pcacheMakeClean(pcache, pdirty);
+  
+    pdirty = next;
+  }
+
+  return SQL_OK;
 }

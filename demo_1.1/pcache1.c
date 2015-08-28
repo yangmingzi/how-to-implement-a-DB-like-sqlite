@@ -100,7 +100,7 @@ static SqlPCachePage *pcache1Fetch(
     p->pnext = pcache1->aphash[h];
 
     pcache1->aphash[h] = p;
-    ++pcache1->nhash;
+    ++pcache1->npage;
 
     return &(p->base);
   }
@@ -120,7 +120,6 @@ static SqlPCachePage *pcache1Fetch(
   p->is_pinned = 1;
 
   pcache1->aphash[h] = p;
-  ++pcache1->nhash;
   ++pcache1->npage;
 
   return &(p->base);
@@ -135,7 +134,7 @@ static SqlPCachePage *pcache1Get(
   unsigned int h = key % pcache1->nhash;
   PgHdr1 *p = pcache1->aphash[h];
   while (p && p->key != key) p = p->pnext;
-  
+
   if (p) return &(p->base);
   return 0;
 }
