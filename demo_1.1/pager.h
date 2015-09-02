@@ -13,7 +13,7 @@ page cache for upper layer.
 #define SQL_DEFAULT_PAGE_SIZE 1024
 
 // size of database header
-#define SQL_DATABASE_HEADER_SIZE 100
+#define SQL_DATABASE_HEADER_SIZE 0
 
 // The type used to represent a page number. The first page in 
 // a file is called page 1. And 0 is used to represent "not a page".

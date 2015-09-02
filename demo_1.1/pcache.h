@@ -23,6 +23,9 @@ struct PgHdr {
 #define PGHDR_CLEAN  0x001
 #define PGHDR_DIRTY  0x002
 
+// Maxinum number of pages can be cached in memory.
+#define MAX_PAGES_IN_CACHE  4096
+
 // Get the size of PCache structure.
 int pcacheSize();
 
@@ -40,7 +43,6 @@ PgHdr *pcacheGet(PCache *pcache, Pgno pgno);
 // Get a page by page number.
 // If the page is not in cache, create a new one and return it.
 PgHdr *pcacheFetch(PCache *pcache, Pgno pgno);
-
 
 // Make the page dirty.
 void pcacheMakeDirty(PCache *pcache, PgHdr *p);

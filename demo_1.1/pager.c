@@ -71,6 +71,9 @@ int pagerOpen(
 
 // Functions used to obtain and release page references.
 int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
+  *pppage = 0;
+
+  // If the page is in cache, return directly.
   DbPage *pdb = pcacheGet(pager->pcache, pgno);
   if (pdb) {
     ++pdb->nref;
@@ -78,7 +81,15 @@ int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
     return SQL_OK;
   }
 
+  // Else fetch a new page slot, and read the content of this page from 
+  // database file.
   pdb = pcacheFetch(pager->pcache, pgno);
+
+  // If pdb is null, there is no unpinned pages and 
+  // no memory for PCache to create a new slot.
+  if (pdb == 0) return SQL_NOMEM;
+
+  // Else, update the page header.
   pdb->pgno = pgno;
   pdb->pager = pager;
   pdb->nref = 1;
@@ -86,11 +97,11 @@ int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
   pdb->pdirty_next = 0;
   pdb->pdirty_prev = 0;
 
+  // Update the content of this page.
   osRead(pager->fd, pdb->pdata, SQL_DEFAULT_PAGE_SIZE, 
           SQL_DATABASE_HEADER_SIZE + (pgno - 1) * SQL_DEFAULT_PAGE_SIZE);
 
   *pppage = pdb;
-
   return SQL_ERROR;
 }
 

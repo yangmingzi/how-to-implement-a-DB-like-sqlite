@@ -19,11 +19,15 @@ int pcacheSize() {
   return sizeof(PCache);
 }
 
-int pcacheSetPageSize(PCache *pcache, int sz_page) {
+// Create plugin pcache module and set its page size.
+static int _pcacheSetPageSize(PCache *pcache, int sz_page) {
   assert(pcache->nref == 0 && pcache->pdirty_head == 0);
   if (pcache->sz_page) {
     SqlPCache *pnew = 0;
-    pnew = global_config.sql_pcache_methods.xCreate(sz_page, sizeof(PgHdr));
+    pnew = global_config.sql_pcache_methods.xCreate(
+      sz_page,                 // Page size.
+      sizeof(PgHdr),           // Extra content.
+      MAX_PAGES_IN_CACHE);     // Maxinum number of cached pages.
     if (pnew == 0) return SQL_ERROR;
 
     pcache->pcache = pnew;
@@ -40,10 +44,11 @@ int pcacheOpen(
   memset(pcache, 0, sizeof(PCache));
   pcache->sz_page = 1;
   pcache->sz_extra = sz_extra;
-  return pcacheSetPageSize(pcache, sz_page);
+  return _pcacheSetPageSize(pcache, sz_page);
 }
 
-PgHdr *pcacheFetchFinish(SqlPCachePage *p) {
+// Convert SqlPCachePage type to PgHdr.
+static PgHdr *_pcacheFetchFinish(SqlPCachePage *p) {
   PgHdr *pgd = (PgHdr *)p->extra;
   pgd->pdata = p->content;
   return pgd;
@@ -55,8 +60,11 @@ PgHdr *pcacheFetch(PCache *pcache, Pgno pgno) {
   SqlPCachePage *ppage 
     = global_config.sql_pcache_methods.xFetch(pcache->pcache, pgno);
 
+  // No memory for PCache1 to create a new slot.
+  if (ppage == 0) return 0;
+
   assert(ppage && ppage->extra);
-  return pcacheFetchFinish(ppage);
+  return _pcacheFetchFinish(ppage);
 }
 
 // Get a page by page number, if it isn't in cache, return 0.
@@ -64,7 +72,7 @@ PgHdr *pcacheGet(PCache *pcache, Pgno pgno) {
   SqlPCachePage *ppage 
     = global_config.sql_pcache_methods.xGet(pcache->pcache, pgno);
 
-  if (!ppage) return 0;
+  if (ppage == 0) return 0;
   return ppage->extra;
 }
 
@@ -84,6 +92,7 @@ void pcacheMakeDirty(PCache *pcache, PgHdr *p) {
 void pcacheMakeClean(PCache *pcache, PgHdr *p) {
   if (p->flags & PGHDR_DIRTY)
     p->flags ^= PGHDR_DIRTY;
+  else return;
 
   if (pcache->pdirty_head == p) pcache->pdirty_head = p->pdirty_next;
   if (pcache->pdirty_tail == p) pcache->pdirty_tail = p->pdirty_prev;
@@ -94,7 +103,7 @@ void pcacheMakeClean(PCache *pcache, PgHdr *p) {
   p->pdirty_prev = 0;
 }
 
-// Get the first dirty page
+// Get the header pointer of dirty pages list.
 PgHdr *pcacheGetDirty(PCache *pcache) {
   return pcache->pdirty_head;
 }

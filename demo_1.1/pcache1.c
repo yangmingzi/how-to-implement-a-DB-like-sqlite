@@ -9,31 +9,36 @@
 typedef struct PCache1 PCache1;
 typedef struct PgHdr1 PgHdr1;
 
+// Each page cached by pcache1 is represented by a instance of 
+// this structure.
 struct PgHdr1 {
-  SqlPCachePage base;
+  SqlPCachePage base;            // Received by PCache module.
 
-  unsigned int key;
-  unsigned char is_pinned;
-  PgHdr1 *pnext;
+  unsigned int key;              // Key value (page number)
+  unsigned char is_pinned;       // Page in use, not in the LRU list.
+  PgHdr1 *pnext;                 // Next page in hash table.
 
-  PgHdr1 *plru_next;
-  PgHdr1 *plru_prev;
+  PgHdr1 *plru_next;             // Next page in LRU list.
+  PgHdr1 *plru_prev;             // Previous page in LRU list.
 };
 
+// Each page cache module is an instance of this structure.
 struct PCache1 {
-  PgHdr1 *plru_head;
-  PgHdr1 *plru_tail;
+  PgHdr1 *plru_head;       // Head pointer of LRU list.
+  PgHdr1 *plru_tail;       // Tail pointer of LRU list.
 
-  int sz_page;
-  int sz_extra;
+  int sz_page;             // Page size.
+  int sz_extra;            // Size of extra content.
+  int mx_pages;             // Maxinum number of pages can be cached in memory.
 
-  unsigned int nhash;
-  unsigned int npage;
+  unsigned int nhash;      // Number of slots in hash table.
+  unsigned int npage;      // Total number of pages in hash table.
 
-  PgHdr1 **aphash;
+  PgHdr1 **aphash;         // Hash table. 
 };
 
-static void pcache1ResizeHash(PCache1 *pcache) {
+// Extent hash table.
+static void _pcache1ResizeHash(PCache1 *pcache) {
   PgHdr1 **apnew;
   unsigned int nnew;
 
@@ -63,7 +68,8 @@ static void pcache1ResizeHash(PCache1 *pcache) {
   }
 }
 
-static SqlPCache *pcache1Create(int sz_page, int sz_extra) {
+// Create a PCache1 module.
+static SqlPCache *_pcache1Create(int sz_page, int sz_extra, int mx_pages) {
   PCache1 *pcache = (PCache1 *)malloc(sizeof(PCache1));
   memset(pcache, 0, sizeof(PCache1));
 
@@ -71,13 +77,16 @@ static SqlPCache *pcache1Create(int sz_page, int sz_extra) {
 
   pcache->sz_page = sz_page;
   pcache->sz_extra = sz_extra;
-  pcache1ResizeHash(pcache);
+  pcache->mx_pages = mx_pages;
+  _pcache1ResizeHash(pcache);
 
   assert(pcache->nhash);
   return (SqlPCache *)pcache;
 }
 
-static SqlPCachePage *pcache1Fetch(
+// Get a page by page number, if it isn't in cache, create a new one 
+// and return it.
+static SqlPCachePage *_pcache1Fetch(
   SqlPCache *pcache, 
   unsigned int key
   ) 
@@ -105,6 +114,11 @@ static SqlPCachePage *pcache1Fetch(
     return &(p->base);
   }
 
+  // If the number of cached pages equal or 
+  // larger than mx_pages, return 0.
+  if (pcache1->npage >= pcache1->mx_pages) 
+    return 0;
+
   // There is no unpinned page in LRU list, so we malloc a new slot
   void *pnew = malloc(pcache1->sz_page + pcache1->sz_extra + 
                     sizeof(PgHdr1));
@@ -125,7 +139,8 @@ static SqlPCachePage *pcache1Fetch(
   return &(p->base);
 }
 
-static SqlPCachePage *pcache1Get(
+// Get a page by page number, if it isn't in cache, return 0.
+static SqlPCachePage *_pcache1Get(
   SqlPCache *pcache, 
   unsigned int key) 
 {  
@@ -140,7 +155,7 @@ static SqlPCachePage *pcache1Get(
 }
 
 void pcache1GlobalRegister(SqlPCacheMethods *methods) {
-  methods->xCreate = pcache1Create;
-  methods->xGet = pcache1Get;
-  methods->xFetch = pcache1Fetch;
+  methods->xCreate = _pcache1Create;
+  methods->xGet = _pcache1Get;
+  methods->xFetch = _pcache1Fetch;
 };

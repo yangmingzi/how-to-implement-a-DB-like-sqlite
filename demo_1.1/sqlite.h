@@ -23,7 +23,8 @@
 //  error codes
 //////////////////////////////////////
 #define SQL_OK  0
-#define SQL_ERROR  -1
+#define SQL_ERROR 1
+#define SQL_NOMEM 2 
 
 
 //////////////////////////////////////
@@ -124,7 +125,7 @@ struct SqlPCachePage {
 */
 typedef struct SqlPCacheMethods SqlPCacheMethods;
 struct SqlPCacheMethods {
-  SqlPCache *(*xCreate)(int sz_page, int sz_extra);
+  SqlPCache *(*xCreate)(int sz_page, int sz_extra, int mx_pages);
   SqlPCachePage *(*xGet)(SqlPCache *, unsigned int key);
   SqlPCachePage *(*xFetch)(SqlPCache *, unsigned int key);
 };

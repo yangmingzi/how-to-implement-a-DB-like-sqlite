@@ -15,18 +15,12 @@ int main() {
   Pager *p;
   pagerOpen(vfs, &p, "data.db", 0, O_RDWR);
 
-  DbPage *page;
-  pagerGet(p, 2, &page);
-  char c = ((char *)(page->pdata))[0];
-  printf("%c\n", c);
+  DbPage *page1, *page2, *page3;
+  pagerGet(p, 1, &page1);
+  pagerGet(p, 1, &page2);
+  pagerGet(p, 3, &page3);
 
-  pagerWrite(page);
-  ((char *)(page->pdata))[0] = ++c;
-  pagerCommit(p);
-
-  pagerGet(p, 2, &page);
-  c = ((char *)(page->pdata))[0];
-  printf("%c\n", c);
+  printf("%p %p %p\n", page1, page2, page3);
 
   puts("over");
   return 0;
