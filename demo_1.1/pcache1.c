@@ -17,6 +17,7 @@ struct PgHdr1 {
   unsigned int key;              // Key value (page number)
   unsigned char is_pinned;       // Page in use, not in the LRU list.
   PgHdr1 *pnext;                 // Next page in hash table.
+  PCache1 *pcache;               // Cache module controlling this page.
 
   PgHdr1 *plru_next;             // Next page in LRU list.
   PgHdr1 *plru_prev;             // Previous page in LRU list.
@@ -84,6 +85,56 @@ static SqlPCache *_pcache1Create(int sz_page, int sz_extra, int mx_pages) {
   return (SqlPCache *)pcache;
 }
 
+// Remove a page from hash table.
+static void _pcache1RemoveFromHash(PgHdr1 *page, int free_flag) {
+  unsigned int h;
+  PCache1 *pcache = page->pcache;
+  PgHdr1 **pp;
+
+  h = page->key % pcache->nhash;
+  for(pp = &pcache->aphash[h]; (*pp) != page && (*pp); pp = &(*pp)->pnext);
+  assert(*pp == page);
+  *pp = (*pp)->pnext;
+
+  --pcache->npage;
+  // if( freeFlag ) pcache1FreePage(pPage);
+}
+
+// Add or remove a page from LRU list.
+#define PCACHE1_LRU_ADD 1
+#define PCACHE1_LRU_REMOVE 2
+static void _pcache1AddRemoveLRU(PgHdr1 *page, int flags) {
+  PCache1 *pcache1 = page->pcache;
+  assert(pcache1);
+
+  if (flags & PCACHE1_LRU_ADD) {
+    page->plru_next = pcache1->plru_head;
+    page->plru_prev = 0;
+    pcache1->plru_head = page;
+    if (pcache1->plru_tail == 0)
+      pcache1->plru_tail = page;
+  }
+
+  if (flags & PCACHE1_LRU_REMOVE) {
+    if (page->plru_prev)
+      page->plru_prev->plru_next = page->plru_next;
+    if (page->plru_next)
+      page->plru_next->plru_prev = page->plru_prev;
+    if (pcache1->plru_head == page)
+      pcache1->plru_head = page->plru_next;
+    if (pcache1->plru_tail == page)
+      pcache1->plru_tail = page->plru_prev; 
+  }
+}
+
+// Unpin a page.
+static void _pcache1Unpin(SqlPCachePage *page) {
+  PgHdr1 *p = (PgHdr1 *)page;
+  assert(p);
+  _pcache1RemoveFromHash(p, 0);
+  _pcache1AddRemoveLRU(p, PCACHE1_LRU_ADD);
+}
+
 // Get a page by page number, if it isn't in cache, create a new one 
 // and return it.
 static SqlPCachePage *_pcache1Fetch(
@@ -96,42 +147,31 @@ static SqlPCachePage *_pcache1Fetch(
   unsigned int h = key % pcache1->nhash;
   PgHdr1 *p = 0;
 
-
   if (pcache1->plru_head) {
     p = pcache1->plru_head;
-  
-    // Chose a victim slot, update this slot and return it to use
-    p->key = key;
-    p->is_pinned = 1;
-    if (p->plru_next)  p->plru_next->plru_prev = p->plru_prev;
-    if (p->plru_prev)  p->plru_prev->plru_next = p->plru_next;
-    p->plru_next = p->plru_prev = 0;
-    p->pnext = pcache1->aphash[h];
-
-    pcache1->aphash[h] = p;
-    ++pcache1->npage;
-
-    return &(p->base);
+    _pcache1AddRemoveLRU(p, PCACHE1_LRU_REMOVE);
   }
 
   // If the number of cached pages equal or 
   // larger than mx_pages, return 0.
-  if (pcache1->npage >= pcache1->mx_pages) 
+  if (p == 0 && pcache1->npage >= pcache1->mx_pages) 
     return 0;
 
   // There is no unpinned page in LRU list, so we malloc a new slot
-  void *pnew = malloc(pcache1->sz_page + pcache1->sz_extra + 
-                    sizeof(PgHdr1));
-  memset(pnew, 0, pcache1->sz_page + pcache1->sz_extra + 
-                    sizeof(PgHdr1));
-
-  p = (PgHdr1 *)(pnew + pcache1->sz_page + pcache1->sz_extra);
-  p->base.content = pnew;
-  p->base.extra = pnew + pcache1->sz_page;
+  if (p == 0) {
+    void *pnew = malloc(pcache1->sz_page + pcache1->sz_extra + 
+                      sizeof(PgHdr1));
+    memset(pnew, 0, pcache1->sz_page + pcache1->sz_extra + 
+                      sizeof(PgHdr1)); 
+    p = (PgHdr1 *)(pnew + pcache1->sz_page + pcache1->sz_extra);
+    p->base.content = pnew;
+    p->base.extra = pnew + pcache1->sz_page;
+  }
 
   p->key = key;
   p->pnext = pcache1->aphash[h];
   p->is_pinned = 1;
+  p->pcache = pcache1;
 
   pcache1->aphash[h] = p;
   ++pcache1->npage;
@@ -158,4 +198,5 @@ void pcache1GlobalRegister(SqlPCacheMethods *methods) {
   methods->xCreate = _pcache1Create;
   methods->xGet = _pcache1Get;
   methods->xFetch = _pcache1Fetch;
+  methods->xUnpin = _pcache1Unpin;
 };

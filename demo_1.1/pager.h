@@ -44,6 +44,9 @@ int pagerOpen(
 // Functions used to obtain and release page references.
 int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage);
 
+// Release a page reference.
+int pagerUnref(DbPage *);
+
 // Operations on page references.
 int pagerWrite(DbPage *);
 

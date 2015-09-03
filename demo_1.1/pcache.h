@@ -10,15 +10,22 @@ typedef struct PCache PCache;
 Every page in the cache is controlled by an instance of PgHdr.
 */
 struct PgHdr {
-  void *pdata;                // Page data
-  void *pextra;               // Extra data
-  Pager *pager;               // The pager controlling this PgHdr
-  Pgno pgno;                  // Page number
-  int nref;                   // Number of reference to this page
-  int flags;                  // Page flags defined below.
+  SqlPCachePage *ppage;       // Handle for plugin pcache module.
 
+  void *pdata;                // Page data.
+  void *pextra;               // Extra data.
+  Pager *pager;               // The pager controlling this PgHdr.
+  Pgno pgno;                  // Page number.
+  int flags;                  // Page flags defined below.
   PgHdr *pdirty_next;         // Next dirty page.
   PgHdr *pdirty_prev;         // Previous dirty page.
+
+  /**************************************************************
+  ** Elements above are public. All that follows is private and 
+  ** shouldn't be accessed by other modules.
+  */
+  int nref;                   // Number of reference to this page
+  PCache *pcache;             // The PCache module controlling this PgHdr.
 };
 #define PGHDR_CLEAN  0x001
 #define PGHDR_DIRTY  0x002
@@ -45,12 +52,15 @@ PgHdr *pcacheGet(PCache *pcache, Pgno pgno);
 PgHdr *pcacheFetch(PCache *pcache, Pgno pgno);
 
 // Make the page dirty.
-void pcacheMakeDirty(PCache *pcache, PgHdr *p);
+void pcacheMakeDirty(PgHdr *p);
 
 // Make the page clean
-void pcacheMakeClean(PCache *pcache, PgHdr *p);
+void pcacheMakeClean(PgHdr *p);
 
 // Get the first dirty page
 PgHdr *pcacheGetDirty(PCache *pcache);
+
+// Release a reference of a page.
+void pcacheRelease(PgHdr *p);
 
 #endif

@@ -47,10 +47,40 @@ int pcacheOpen(
   return _pcacheSetPageSize(pcache, sz_page);
 }
 
+static void _pcacheFinishConvertInit(
+  SqlPCachePage *p,
+  PCache *pcache,
+  Pgno pgno
+  ) {
+  PgHdr *ret;
+  ret = (PgHdr*)p->extra;
+
+  ret->ppage = p;
+  ret->pdata = p->content;
+  ret->pextra = p->extra;
+  memset(ret->pextra, 0, pcache->sz_extra);
+  ret->pcache = pcache;
+  ret->pgno = pgno;
+  ret->flags = PGHDR_CLEAN;
+}
+
 // Convert SqlPCachePage type to PgHdr.
-static PgHdr *_pcacheFetchFinish(SqlPCachePage *p) {
+#define PCACHE_FINISH_CONVERT_NEED_INIT 1
+#define PCACHE_FINISH_CONVERT_DONT_INIT 2
+static PgHdr *_pcacheFinishConvert(
+  SqlPCachePage *p,     // Page obtained by plugin pcache module.
+  PCache *pcache,       // Obtain the page from this cache.
+  Pgno pgno,            // Page number.
+  int flags             // flags are defined above.
+  ) {
+  assert(p != 0);
   PgHdr *pgd = (PgHdr *)p->extra;
-  pgd->pdata = p->content;
+
+  if (flags & PCACHE_FINISH_CONVERT_NEED_INIT) {
+    _pcacheFinishConvertInit(p, pcache, pgno);
+  }
+
+  ++pgd->nref;
   return pgd;
 }
 
@@ -63,8 +93,8 @@ PgHdr *pcacheFetch(PCache *pcache, Pgno pgno) {
   // No memory for PCache1 to create a new slot.
   if (ppage == 0) return 0;
 
-  assert(ppage && ppage->extra);
-  return _pcacheFetchFinish(ppage);
+  return  _pcacheFinishConvert(ppage, pcache, pgno,
+            PCACHE_FINISH_CONVERT_NEED_INIT);
 }
 
 // Get a page by page number, if it isn't in cache, return 0.
@@ -73,13 +103,15 @@ PgHdr *pcacheGet(PCache *pcache, Pgno pgno) {
     = global_config.sql_pcache_methods.xGet(pcache->pcache, pgno);
 
   if (ppage == 0) return 0;
-  return ppage->extra;
+  return  _pcacheFinishConvert(ppage, pcache, pgno,
+            PCACHE_FINISH_CONVERT_DONT_INIT);
 }
 
 // Make a page dirty.
-void pcacheMakeDirty(PCache *pcache, PgHdr *p) {
+void pcacheMakeDirty(PgHdr *p) {
   assert(p->nref > 0);
   if (p->flags & PGHDR_DIRTY) return ;
+  PCache *pcache = p->pcache;
 
   p->flags |= PGHDR_DIRTY;
   if (pcache->pdirty_head)  pcache->pdirty_head->pdirty_prev = p;
@@ -89,10 +121,10 @@ void pcacheMakeDirty(PCache *pcache, PgHdr *p) {
 }
 
 // Make a page clean
-void pcacheMakeClean(PCache *pcache, PgHdr *p) {
-  if (p->flags & PGHDR_DIRTY)
-    p->flags ^= PGHDR_DIRTY;
-  else return;
+void pcacheMakeClean(PgHdr *p) {
+  if ((p->flags & PGHDR_DIRTY) == 0) return;
+  PCache *pcache = p->pcache;
+  p->flags ^= PGHDR_DIRTY;
 
   if (pcache->pdirty_head == p) pcache->pdirty_head = p->pdirty_next;
   if (pcache->pdirty_tail == p) pcache->pdirty_tail = p->pdirty_prev;
@@ -106,4 +138,15 @@ void pcacheMakeClean(PCache *pcache, PgHdr *p) {
 // Get the header pointer of dirty pages list.
 PgHdr *pcacheGetDirty(PCache *pcache) {
   return pcache->pdirty_head;
+}
+
+// Release a reference of a page.
+void pcacheRelease(PgHdr *p) {
+  assert(p->nref > 0);
+
+  --(p->nref);
+  if (p->nref == 0) {
+    assert((p->flags & PGHDR_DIRTY) == 0);
+    global_config.sql_pcache_methods.xUnpin(p->ppage);
+  }
 }

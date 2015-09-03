@@ -68,6 +68,43 @@ int pagerOpen(
   return SQL_OK;
 };
 
+// Write the dirty page to database file.
+static void _pagerWritePage(PgHdr *pdirty) {
+  void *pdata = pdirty->pdata;
+  int offset = SQL_DATABASE_HEADER_SIZE + 
+                (pdirty->pgno - 1) * SQL_DEFAULT_PAGE_SIZE;
+  int sz = SQL_DEFAULT_PAGE_SIZE;
+
+  int ret = osWrite(pdirty->pager->fd, pdata, sz, offset);
+
+  if (SQL_OK != ret) {
+    // do nothing now
+  }
+}
+
+// Sync database file for pager.
+int pagerCommit(Pager *pager) {
+  PCache *pcache = pager->pcache;
+  PgHdr *pdirty = pcacheGetDirty(pcache);
+
+  while (pdirty) {
+    PgHdr *next = pdirty->pdirty_next;
+
+    _pagerWritePage(pdirty);
+    pcacheMakeClean(pdirty);
+  
+    pdirty = next;
+  }
+
+  return SQL_OK;
+}
+
+// Release a page reference.
+int pagerUnref(DbPage *page) {
+  pcacheRelease(page);
+
+  return SQL_OK;
+}
 
 // Functions used to obtain and release page references.
 int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
@@ -76,7 +113,6 @@ int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
   // If the page is in cache, return directly.
   DbPage *pdb = pcacheGet(pager->pcache, pgno);
   if (pdb) {
-    ++pdb->nref;
     *pppage = pdb;
     return SQL_OK;
   }
@@ -92,7 +128,6 @@ int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
   // Else, update the page header.
   pdb->pgno = pgno;
   pdb->pager = pager;
-  pdb->nref = 1;
   pdb->flags = PGHDR_CLEAN;
   pdb->pdirty_next = 0;
   pdb->pdirty_prev = 0;
@@ -107,38 +142,7 @@ int pagerGet(Pager *pager, Pgno pgno, DbPage **pppage) {
 
 // Make a page writable.
 int pagerWrite(DbPage* page) {
-  pcacheMakeDirty(page->pager->pcache, page);
-
-  return SQL_OK;
-}
-
-// Write the dirty page to database file.
-static void _pagerWritePage(PgHdr *pdirty) {
-  void *pdata = pdirty->pdata;
-  int offset = SQL_DATABASE_HEADER_SIZE + 
-                (pdirty->pgno - 1) * SQL_DEFAULT_PAGE_SIZE;
-  int sz = SQL_DEFAULT_PAGE_SIZE;
-
-  int ret = osWrite(pdirty->pager->fd, pdata, sz, offset);
-  printf("%d %d\n", SQL_OK, ret);
-  if (SQL_OK != ret) {
-    // do nothing now
-  }
-}
-
-// Sync database file for pager.
-int pagerCommit(Pager *pager) {
-  PCache *pcache = pager->pcache;
-  PgHdr *pdirty = pcacheGetDirty(pcache);
-
-  while (pdirty) {
-    PgHdr *next = pdirty->pdirty_next;
-
-    _pagerWritePage(pdirty);
-    pcacheMakeClean(pcache, pdirty);
-  
-    pdirty = next;
-  }
+  pcacheMakeDirty(page);
 
   return SQL_OK;
 }

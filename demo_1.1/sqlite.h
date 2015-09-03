@@ -128,6 +128,7 @@ struct SqlPCacheMethods {
   SqlPCache *(*xCreate)(int sz_page, int sz_extra, int mx_pages);
   SqlPCachePage *(*xGet)(SqlPCache *, unsigned int key);
   SqlPCachePage *(*xFetch)(SqlPCache *, unsigned int key);
+  void (*xUnpin)(SqlPCachePage *);
 };
 
 #endif
