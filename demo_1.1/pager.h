@@ -9,8 +9,8 @@ page cache for upper layer.
 
 #include "sqlite.h"
 
-// default page size, 1024 bytes
-#define SQL_DEFAULT_PAGE_SIZE 1024
+// default page size, 2048 bytes
+#define SQL_DEFAULT_PAGE_SIZE 2048
 
 // size of database header
 #define SQL_DATABASE_HEADER_SIZE 0
@@ -18,6 +18,7 @@ page cache for upper layer.
 // The type used to represent a page number. The first page in 
 // a file is called page 1. And 0 is used to represent "not a page".
 typedef unsigned int Pgno;
+// typedef int Pgno;
 
 // Each open file is managed by a separate instance of "Pager".
 typedef struct Pager Pager;

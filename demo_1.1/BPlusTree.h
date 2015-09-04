@@ -8,9 +8,12 @@
 #include <stdlib.h>
 
 typedef unsigned char byte;
-typedef int Key;
 typedef struct Node Node;
 typedef struct Node Tree;
+typedef unsigned char u8;
+typedef unsigned short int u16;
+typedef unsigned int u32;
+typedef u32 Key;
 
 /*
   Search in B+tree pointed by t with the key
